@@ -655,6 +655,7 @@ where
     let proof_of_indexing = if ctx
         .inputs
         .store
+        .clone()
         .supports_proof_of_indexing(&ctx.inputs.deployment_id)
         .await?
     {
