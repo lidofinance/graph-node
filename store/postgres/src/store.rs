@@ -35,7 +35,7 @@ use graph::prelude::{
 use graph_graphql::prelude::api_schema;
 use web3::types::{Address, H256};
 
-use crate::metadata;
+use crate::deployment;
 use crate::relational::Layout;
 use crate::relational_queries::FromEntityData;
 use crate::store_events::SubscriptionManager;
@@ -691,17 +691,17 @@ impl Store {
         }
 
         let conn = self.get_conn()?;
-        let input_schema = metadata::subgraph_schema(&conn, subgraph_id.to_owned())?;
+        let input_schema = deployment::schema(&conn, subgraph_id.to_owned())?;
         let network = if subgraph_id.is_meta() {
             // The subgraph of subgraphs schema is built-in. Use an impossible
             // network name so that we will never find blocks for this subgraph
             Some(subgraph_id.as_str().to_owned())
         } else {
-            metadata::subgraph_network(&conn, &subgraph_id)?
+            deployment::network(&conn, &subgraph_id)?
         };
 
         let graft_block =
-            metadata::graft_point(&conn, &subgraph_id)?.map(|(_, ptr)| ptr.number as i32);
+            deployment::graft_point(&conn, &subgraph_id)?.map(|(_, ptr)| ptr.number as i32);
 
         // Generate an API schema  for the subgraph and make sure all types in the
         // API schema have a @subgraphId directive as well
@@ -1033,11 +1033,15 @@ impl Store {
             section.end();
 
             if !deterministic_errors.is_empty() {
-                metadata::insert_subgraph_errors(&econn.conn, &subgraph_id, deterministic_errors)?;
+                deployment::insert_subgraph_errors(
+                    &econn.conn,
+                    &subgraph_id,
+                    deterministic_errors,
+                )?;
             }
 
             let metadata_event =
-                metadata::forward_block_ptr(&econn.conn, &subgraph_id, block_ptr_to)?;
+                deployment::forward_block_ptr(&econn.conn, &subgraph_id, block_ptr_to)?;
             Ok(event.extend(metadata_event))
         })?;
 
@@ -1090,7 +1094,7 @@ impl Store {
                 Self::block_ptr_with_conn(&subgraph_id, &econn)?
             );
             let metadata_event =
-                metadata::revert_block_ptr(&econn.conn, &subgraph_id, block_ptr_to)?;
+                deployment::revert_block_ptr(&econn.conn, &subgraph_id, block_ptr_to)?;
 
             let (event, count) = econn.revert_block(&block_ptr_from)?;
             econn.update_entity_count(count)?;
@@ -1112,7 +1116,7 @@ impl Store {
             Ok(DeploymentState::meta())
         } else {
             let conn = self.get_conn()?;
-            metadata::deployment_state_from_id(&conn, id)
+            deployment::state(&conn, id)
         }
     }
 
@@ -1122,7 +1126,7 @@ impl Store {
         error: SubgraphError,
     ) -> Result<(), anyhow::Error> {
         self.with_conn(move |conn, _| {
-            conn.transaction(|| metadata::fail_subgraph(&conn, &id, error).map_err(|e| e.into()))
+            conn.transaction(|| deployment::fail(&conn, &id, error).map_err(|e| e.into()))
         })
         .await?;
         Ok(())
@@ -1136,7 +1140,7 @@ impl Store {
         let econn = self.get_entity_conn(subgraph_id, ReplicaId::Main)?;
 
         econn.transaction(|| {
-            metadata::unfail_deployment(&econn.conn, subgraph_id)?;
+            deployment::unfail(&econn.conn, subgraph_id)?;
             econn.start_subgraph(logger)
         })
     }
