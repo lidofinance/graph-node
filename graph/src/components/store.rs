@@ -807,7 +807,7 @@ pub trait Store: Send + Sync + 'static {
     /// Get a pointer to the most recently processed block in the subgraph.
     fn block_ptr(
         &self,
-        subgraph_id: SubgraphDeploymentId,
+        subgraph_id: &SubgraphDeploymentId,
     ) -> Result<Option<EthereumBlockPointer>, Error>;
 
     fn supports_proof_of_indexing<'a>(
@@ -1030,7 +1030,7 @@ pub type PoolWaitStats = Arc<RwLock<MovingStats>>;
 impl Store for MockStore {
     fn block_ptr(
         &self,
-        _subgraph_id: SubgraphDeploymentId,
+        _subgraph_id: &SubgraphDeploymentId,
     ) -> Result<Option<EthereumBlockPointer>, Error> {
         unimplemented!();
     }
