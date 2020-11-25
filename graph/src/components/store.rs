@@ -574,10 +574,7 @@ where
         // special 'subgraphs' subgraph is never considered synced so that
         // we always throttle it
         let check_synced = |store: &dyn QueryStore, deployment: &SubgraphDeploymentId| {
-            deployment != &*SUBGRAPHS_ID
-                && store
-                    .is_deployment_synced(deployment.clone())
-                    .unwrap_or(false)
+            deployment != &*SUBGRAPHS_ID && store.is_deployment_synced(deployment).unwrap_or(false)
         };
         let mut synced = check_synced(&*store, &deployment);
         let synced_check_interval = interval.checked_mul(SYNC_REFRESH_FREQ).unwrap();
@@ -914,23 +911,12 @@ pub trait Store: Send + Sync + 'static {
             return Ok(true);
         }
 
-        // Check store for a deployment entity for this subgraph ID
-        self.get(SubgraphDeploymentEntity::key(id.to_owned()))
-            .map_err(|e| format_err!("Failed to query SubgraphDeployment entities: {}", e))
-            .map(|entity_opt| entity_opt.is_some())
+        self.block_ptr(id).map(|ptr| ptr.is_some())
     }
 
     /// Return true if the deployment with the given id is fully synced,
     /// and return false otherwise. Errors from the store are passed back up
-    fn is_deployment_synced(&self, id: SubgraphDeploymentId) -> Result<bool, Error> {
-        let entity = self.get(SubgraphDeploymentEntity::key(id))?;
-        entity
-            .map(|entity| match entity.get("synced") {
-                Some(Value::Bool(true)) => Ok(true),
-                _ => Ok(false),
-            })
-            .unwrap_or(Ok(false))
-    }
+    fn is_deployment_synced(&self, id: &SubgraphDeploymentId) -> Result<bool, Error>;
 
     /// The deployment `id` finished syncing, mark it as synced in the database
     /// and promote it to the current version in the subgraphs where it was the
@@ -1009,6 +995,11 @@ pub trait Store: Send + Sync + 'static {
         &self,
         subgraph_id: &SubgraphDeploymentId,
     ) -> Result<Vec<StoredDynamicDataSource>, StoreError>;
+
+    fn assigned_node(
+        &self,
+        subgraph_id: &SubgraphDeploymentId,
+    ) -> Result<Option<NodeId>, StoreError>;
 }
 
 mock! {
@@ -1174,6 +1165,10 @@ impl Store for MockStore {
         unimplemented!()
     }
 
+    fn is_deployment_synced(&self, _: &SubgraphDeploymentId) -> Result<bool, Error> {
+        unimplemented!()
+    }
+
     fn deployment_synced(&self, _: &SubgraphDeploymentId) -> Result<(), Error> {
         unimplemented!()
     }
@@ -1186,6 +1181,10 @@ impl Store for MockStore {
         &self,
         _subgraph_id: &SubgraphDeploymentId,
     ) -> Result<Vec<StoredDynamicDataSource>, StoreError> {
+        unimplemented!()
+    }
+
+    fn assigned_node(&self, _: &SubgraphDeploymentId) -> Result<Option<NodeId>, StoreError> {
         unimplemented!()
     }
 }
@@ -1311,7 +1310,7 @@ pub trait QueryStore: Send + Sync {
 
     fn subscribe(&self, entities: Vec<SubgraphEntityPair>) -> StoreEventStreamBox;
 
-    fn is_deployment_synced(&self, id: SubgraphDeploymentId) -> Result<bool, Error>;
+    fn is_deployment_synced(&self, id: &SubgraphDeploymentId) -> Result<bool, Error>;
 
     fn block_ptr(
         &self,
