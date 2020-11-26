@@ -997,6 +997,8 @@ pub trait Store: Send + Sync + 'static {
         &self,
         subgraph_id: &SubgraphDeploymentId,
     ) -> Result<Option<NodeId>, StoreError>;
+
+    fn assignments(&self, node: &NodeId) -> Result<Vec<SubgraphDeploymentId>, StoreError>;
 }
 
 mock! {
@@ -1182,6 +1184,10 @@ impl Store for MockStore {
     }
 
     fn assigned_node(&self, _: &SubgraphDeploymentId) -> Result<Option<NodeId>, StoreError> {
+        unimplemented!()
+    }
+
+    fn assignments(&self, _: &NodeId) -> Result<Vec<SubgraphDeploymentId>, StoreError> {
         unimplemented!()
     }
 }
