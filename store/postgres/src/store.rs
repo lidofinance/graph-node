@@ -606,7 +606,7 @@ impl Store {
             cancel_handle.check_cancel()?;
             let metadata = store.storage(&conn, &*METADATA_NAMESPACE, &*SUBGRAPHS_ID)?;
             cancel_handle.check_cancel()?;
-            let conn = e::Connection::new(conn.into(), storage, metadata);
+            let conn = e::Connection::new(conn.into(), storage, metadata, site.deployment.clone());
 
             f(&conn, cancel_handle)
         })
@@ -650,7 +650,12 @@ impl Store {
             .inc_by(start.elapsed().as_secs_f64());
         let storage = self.storage(&conn, &site.namespace, &site.deployment)?;
         let metadata = self.storage(&conn, &*METADATA_NAMESPACE, &*SUBGRAPHS_ID)?;
-        Ok(e::Connection::new(conn.into(), storage, metadata))
+        Ok(e::Connection::new(
+            conn.into(),
+            storage,
+            metadata,
+            site.deployment.clone(),
+        ))
     }
 
     pub(crate) fn wait_stats(&self, replica: ReplicaId) -> &PoolWaitStats {
@@ -676,7 +681,7 @@ impl Store {
             return Ok(storage.clone());
         }
 
-        let storage = Arc::new(e::Connection::layout(conn, namespace, subgraph)?);
+        let storage = Arc::new(e::Connection::layout(conn, namespace.clone(), subgraph)?);
         if storage.is_cacheable() {
             &self
                 .storage_cache
