@@ -10,17 +10,17 @@ use std::time::{Duration, Instant};
 use graph::{
     data::graphql::{object, object_value},
     data::subgraph::schema::SubgraphError,
-    data::{query::CacheStatus, subgraph::SubgraphFeature},
+    data::{query::CacheStatus, query::QueryTarget, subgraph::SubgraphFeature},
     prelude::{
         async_trait, futures03::stream::StreamExt, futures03::FutureExt, futures03::TryFutureExt,
-        o, serde_json, slog, tokio, ApiSchema, DeploymentState, Entity, EntityKey, EntityOperation,
+        o, serde_json, slog, tokio, ApiSchema, Entity, EntityKey, EntityOperation,
         EthereumBlockPointer, FutureExtension, GraphQlRunner as _, Logger, NodeId, Query,
         QueryError, QueryExecutionError, QueryLoadManager, QueryResult, QueryVariables, Schema,
         Store, SubgraphDeploymentEntity, SubgraphDeploymentId, SubgraphManifest, SubgraphName,
-        SubgraphVersionSwitchingMode, Subscription, SubscriptionError, Value, BLOCK_NUMBER_MAX,
+        SubgraphVersionSwitchingMode, Subscription, SubscriptionError, Value,
     },
 };
-use graph_graphql::prelude::*;
+use graph_graphql::{prelude::*, subscription::execute_subscription};
 use test_store::{
     execute_subgraph_query_with_complexity, execute_subgraph_query_with_deadline,
     run_test_sequentially, transact_entity_operations, transact_errors, BLOCK_ONE, GENESIS_PTR,
@@ -253,36 +253,13 @@ async fn execute_query_document_with_variables(
         STORE.clone(),
         LOAD_MANAGER.clone(),
     ));
-    let query = Query::new(Arc::new(api_test_schema(id)), query, variables, None);
-    let state = DeploymentState {
-        id: query.schema.id().clone(),
-        reorg_count: 0,
-        max_reorg_depth: 0,
-        latest_ethereum_block_number: BLOCK_NUMBER_MAX,
-    };
+    let target = QueryTarget::Deployment(id.clone());
+    let query = Query::new(query, variables);
 
     runner
-        .run_query_with_complexity(query, state, None, None, None, None, false)
+        .run_query_with_complexity(query, target, None, None, None, None, false)
         .await
         .unwrap_first()
-}
-
-async fn execute_query_document_with_state(
-    id: &SubgraphDeploymentId,
-    query: q::Document,
-    state: DeploymentState,
-) -> QueryResult {
-    let runner = Arc::new(GraphQlRunner::new(
-        &*LOGGER,
-        STORE.clone(),
-        LOAD_MANAGER.clone(),
-    ));
-    let query = Query::new(Arc::new(api_test_schema(id)), query, None, None);
-
-    graph::prelude::futures03::executor::block_on(
-        runner.run_query_with_complexity(query, state, None, None, None, None, false),
-    )
-    .unwrap_first()
 }
 
 struct MockQueryLoadManager(Arc<tokio::sync::Semaphore>);
@@ -790,7 +767,6 @@ fn include_directive_works_with_query_variables() {
 fn query_complexity() {
     run_test_sequentially(setup, |_, id| async move {
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query(
                 "query {
                 musicians(orderBy: id) {
@@ -806,13 +782,13 @@ fn query_complexity() {
             )
             .unwrap(),
             None,
-            None,
         );
         let max_complexity = Some(1_010_100);
 
         // This query is exactly at the maximum complexity.
+        let id2 = id.clone();
         let result = graph::spawn_blocking_allow_panic(move || {
-            execute_subgraph_query_with_complexity(query, max_complexity)
+            execute_subgraph_query_with_complexity(query, id2.into(), max_complexity)
         })
         .await
         .unwrap()
@@ -820,7 +796,6 @@ fn query_complexity() {
         assert!(!result.has_errors());
 
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query(
                 "query {
                 musicians(orderBy: id) {
@@ -841,12 +816,11 @@ fn query_complexity() {
             )
             .unwrap(),
             None,
-            None,
         );
 
         // The extra introspection causes the complexity to go over.
         let result = graph::spawn_blocking_allow_panic(move || {
-            execute_subgraph_query_with_complexity(query, max_complexity)
+            execute_subgraph_query_with_complexity(query, id.into(), max_complexity)
         })
         .await
         .unwrap();
@@ -865,7 +839,6 @@ fn query_complexity_subscriptions() {
         let store_resolver = StoreResolver::for_subscription(&logger, id.clone(), store);
 
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query(
                 "subscription {
                 musicians(orderBy: id) {
@@ -881,7 +854,6 @@ fn query_complexity_subscriptions() {
             )
             .unwrap(),
             None,
-            None,
         );
         let max_complexity = Some(1_010_100);
         let options = SubscriptionExecutionOptions {
@@ -894,13 +866,14 @@ fn query_complexity_subscriptions() {
             max_skip: std::u32::MAX,
             load_manager: mock_query_load_manager(),
         };
+        let schema = Arc::new(api_test_schema(&id));
 
         // This query is exactly at the maximum complexity.
         // FIXME: Not collecting the stream because that will hang the test.
-        let _ignore_stream = execute_subscription(Subscription { query }, options).unwrap();
+        let _ignore_stream =
+            execute_subscription(Subscription { query }, schema.clone(), options).unwrap();
 
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query(
                 "subscription {
                 musicians(orderBy: id) {
@@ -921,7 +894,6 @@ fn query_complexity_subscriptions() {
             )
             .unwrap(),
             None,
-            None,
         );
 
         let store = STORE.clone().query_store(&id, true).unwrap();
@@ -939,7 +911,7 @@ fn query_complexity_subscriptions() {
         };
 
         // The extra introspection causes the complexity to go over.
-        let result = execute_subscription(Subscription { query }, options);
+        let result = execute_subscription(Subscription { query }, schema, options);
         match result {
             Err(SubscriptionError::GraphQLError(e)) => match e[0] {
                 QueryExecutionError::TooComplex(1_010_200, _) => (), // Expected
@@ -954,14 +926,12 @@ fn query_complexity_subscriptions() {
 fn instant_timeout() {
     run_test_sequentially(setup, |_, id| async move {
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query("query { musicians(first: 100) { name } }").unwrap(),
-            None,
             None,
         );
 
         match graph::spawn_blocking_allow_panic(move || {
-            execute_subgraph_query_with_deadline(query, Some(Instant::now()))
+            execute_subgraph_query_with_deadline(query, id.into(), Some(Instant::now()))
         })
         .await
         .unwrap()
@@ -1274,7 +1244,6 @@ fn subscription_gets_result_even_without_events() {
         let store_resolver = StoreResolver::for_subscription(&logger, id.clone(), store);
 
         let query = Query::new(
-            Arc::new(api_test_schema(&id)),
             graphql_parser::parse_query(
                 "subscription {
               musicians(orderBy: id, first: 2) {
@@ -1283,7 +1252,6 @@ fn subscription_gets_result_even_without_events() {
             }",
             )
             .unwrap(),
-            None,
             None,
         );
 
@@ -1297,10 +1265,10 @@ fn subscription_gets_result_even_without_events() {
             max_skip: std::u32::MAX,
             load_manager: mock_query_load_manager(),
         };
-
+        let schema = Arc::new(api_test_schema(&id));
         // Execute the subscription and expect at least one result to be
         // available in the result stream
-        let stream = execute_subscription(Subscription { query }, options).unwrap();
+        let stream = execute_subscription(Subscription { query }, schema, options).unwrap();
         let results: Vec<_> = stream
             .take(1)
             .collect()
@@ -1549,8 +1517,13 @@ fn query_detects_reorg() {
             .deployment_state_from_id(id.clone())
             .expect("failed to get state");
 
+        // Inject a fake initial state; c435c25decbc4ad7bbbadf8e0ced0ff2
+        *graph_graphql::test_support::INITIAL_DEPLOYMENT_STATE_FOR_TESTS
+            .lock()
+            .unwrap() = Some(state);
+
         // When there is no revert, queries work fine
-        let result = execute_query_document_with_state(&id, query.clone(), state.clone()).await;
+        let result = execute_query_document(&id, query.clone()).await;
 
         assert_eq!(
             extract_data!(result),
@@ -1565,7 +1538,7 @@ fn query_detects_reorg() {
         // at block 1 when we got `state`, and reorged once by one block, which
         // can not affect block 0, and it's therefore ok to query at block 0
         // even with a concurrent reorg
-        let result = execute_query_document_with_state(&id, query.clone(), state.clone()).await;
+        let result = execute_query_document(&id, query.clone()).await;
         assert_eq!(
             extract_data!(result),
             Some(object!(musician: object!(id: "m1")))
@@ -1575,12 +1548,17 @@ fn query_detects_reorg() {
         // But the state we have is also for block 1, but with a smaller reorg count
         // and we therefore report an error
         transact_entity_operations(&*STORE, id.clone(), BLOCK_ONE.clone(), vec![]).unwrap();
-        let result = execute_query_document_with_state(&id, query.clone(), state).await;
+        let result = execute_query_document(&id, query.clone()).await;
         match result.to_result().unwrap_err()[0] {
             QueryError::ExecutionError(QueryExecutionError::DeploymentReverted) => { /* expected */
             }
             _ => panic!("unexpected error from block reorg"),
         }
+
+        // Reset the fake initial state; c435c25decbc4ad7bbbadf8e0ced0ff2
+        *graph_graphql::test_support::INITIAL_DEPLOYMENT_STATE_FOR_TESTS
+            .lock()
+            .unwrap() = None;
     })
 }
 

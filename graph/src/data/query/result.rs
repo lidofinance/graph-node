@@ -1,5 +1,8 @@
 use super::error::{QueryError, QueryExecutionError};
-use crate::{data::graphql::SerializableValue, prelude::CacheWeight};
+use crate::{
+    data::graphql::SerializableValue,
+    prelude::{CacheWeight, SubgraphDeploymentId},
+};
 use graphql_parser::query as q;
 use serde::ser::*;
 use serde::Serialize;
@@ -55,6 +58,10 @@ impl QueryResults {
         QueryResults {
             results: Vec::new(),
         }
+    }
+
+    pub fn first(&self) -> Option<&Arc<QueryResult>> {
+        self.results.first()
     }
 }
 
@@ -189,6 +196,8 @@ pub struct QueryResult {
         serialize_with = "serialize_extensions"
     )]
     extensions: Option<q::Value>,
+    #[serde(skip_serializing)]
+    pub deployment: Option<SubgraphDeploymentId>,
 }
 
 impl QueryResult {
@@ -197,6 +206,7 @@ impl QueryResult {
             data: Some(data),
             errors: Vec::new(),
             extensions: None,
+            deployment: None,
         }
     }
 
@@ -235,6 +245,7 @@ impl From<QueryExecutionError> for QueryResult {
             data: None,
             errors: vec![e.into()],
             extensions: None,
+            deployment: None,
         }
     }
 }
@@ -245,6 +256,7 @@ impl From<QueryError> for QueryResult {
             data: None,
             errors: vec![e],
             extensions: None,
+            deployment: None,
         }
     }
 }
@@ -255,6 +267,7 @@ impl From<Vec<QueryExecutionError>> for QueryResult {
             data: None,
             errors: e.into_iter().map(QueryError::from).collect(),
             extensions: None,
+            deployment: None,
         }
     }
 }
