@@ -1079,7 +1079,7 @@ dependencies = [
 [[package]]
 name = "ethabi"
 version = "12.0.0-graph"
-source = "git+https://github.com/graphprotocol/ethabi.git?branch=master#35977d1ce69d4c2db652c502d70e4e53a7aa9897"
+source = "git+https://github.com/graphprotocol/ethabi.git#35977d1ce69d4c2db652c502d70e4e53a7aa9897"
 dependencies = [
  "ethereum-types",
  "rustc-hex",
@@ -2193,9 +2193,9 @@ dependencies = [
 
 [[package]]
 name = "ipfs-api"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e93cd854b7d68085b438401625317dc38b88a7c586cdea09ccdbe19cb49ac55b"
+checksum = "f9e7fbfe5c8cb04c27fe20bf2624354f4d102652fd465a297a924c24e60aba4a"
 dependencies = [
  "bytes 0.5.6",
  "dirs 2.0.2",
@@ -5276,7 +5276,7 @@ dependencies = [
 [[package]]
 name = "web3"
 version = "0.10.0-graph"
-source = "git+https://github.com/graphprotocol/rust-web3?branch=master#c37ecac19fb46e8b3991d64bb83d6bfbf578bae0"
+source = "git+https://github.com/graphprotocol/rust-web3#c37ecac19fb46e8b3991d64bb83d6bfbf578bae0"
 dependencies = [
  "arrayvec",
  "base64 0.12.3",
